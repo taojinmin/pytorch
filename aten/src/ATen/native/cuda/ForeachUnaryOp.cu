@@ -1,6 +1,6 @@
 #include <ATen/Dispatch.h>
-#include <ATen/native/cuda/ForeachUtils.cuh>
-#include <ATen/native/cuda/MultiTensorApply.cuh>
+#include <ATen/native/ForeachUtils.h>
+#include <ATen/native/cuda/ForeachFunctors.cuh>
 
 namespace at { namespace native {
 
@@ -68,7 +68,7 @@ std::vector<Tensor> foreach_tensor_sqrt_cuda(TensorList tensors) {
         return at::native::foreach_tensor_sqrt_slow(tensors);
     }
 
-    return foreach_unary_op_<Sqrt>(tensors);
+    return foreach_unary_op<Sqrt>(tensors);
 
 }
 
