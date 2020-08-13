@@ -118,6 +118,52 @@ class TestForeach(TestCase):
                    torch.tensor([1], dtype=torch.long, device=device)]
         self.assertRaises(RuntimeError, lambda: torch._foreach_add(tensors, 1))
 
+    def test_add_list_error_cases(self, device):
+        tensors1 = []
+        tensors2 = []
+
+        # Empty lists
+        with self.assertRaises(RuntimeError):
+            torch._foreach_add(tensors1, tensors2)
+            torch._foreach_add_(tensors1, tensors2)
+
+        # One empty list
+        tensors1.append(torch.tensor([1], device=device))
+        with self.assertRaises(RuntimeError):
+            torch._foreach_add(tensors1, tensors2)
+            torch._foreach_add_(tensors1, tensors2)
+
+        # Lists have different amount of tensors
+        tensors2.append(torch.tensor([1], device=device))
+        tensors2.append(torch.tensor([1], device=device))
+        with self.assertRaises(RuntimeError):
+            torch._foreach_add(tensors1, tensors2)
+            torch._foreach_add_(tensors1, tensors2)
+
+        # Different dtypes
+        tensors1 = []
+        tensors2 = []
+        for _ in range(10):
+            tensors1.append(torch.zeros(10, 10, device=device, dtype=torch.float))
+            tensors2.append(torch.ones(10, 10, device=device, dtype=torch.int))
+
+        with self.assertRaises(RuntimeError):
+            torch._foreach_add(tensors1, tensors2)
+            torch._foreach_add_(tensors1, tensors2)
+
+    @dtypes(*torch.testing.get_all_dtypes())
+    def test_add_list_same_size(self, device, dtype):
+        tensors1 = []
+        tensors2 = []
+        for _ in range(10):
+            tensors1.append(torch.zeros(10, 10, device=device, dtype=dtype))
+            tensors2.append(torch.ones(10, 10, device=device, dtype=dtype))
+
+        res = torch._foreach_add(tensors1, tensors2)
+        torch._foreach_add_(tensors1, tensors2)
+        self.assertEqual(res, tensors1)
+        self.assertEqual(res[0], torch.ones(10, 10, device=device, dtype=dtype))
+
 instantiate_device_type_tests(TestForeach, globals())
 
 if __name__ == '__main__':
