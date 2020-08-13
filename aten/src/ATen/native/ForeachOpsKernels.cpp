@@ -3,6 +3,44 @@
 
 namespace at { namespace native {
 
+std::vector<Tensor> foreach_tensor_exp_slow(TensorList tensors) {
+  verify_list(tensors);
+
+  std::vector<Tensor> result;
+  for (const auto& t : tensors) {
+    result.emplace_back(t.exp());
+  }
+
+  return result;
+}
+
+void foreach_tensor_exp_slow_(TensorList tensors) {
+  verify_list(tensors);
+
+  for (auto& t : tensors) {
+    t.exp_();
+  }
+}
+
+std::vector<Tensor> foreach_tensor_sqrt_slow(TensorList tensors) {
+  verify_list(tensors);
+
+  std::vector<Tensor> result;
+  for (const auto& t : tensors) {
+    result.emplace_back(t.sqrt());
+  }
+
+  return result;
+}
+
+void foreach_tensor_sqrt_slow_(TensorList tensors) {
+  verify_list(tensors);
+
+  for (auto& t : tensors) {
+    t.sqrt_();
+  }
+}
+
 std::vector<Tensor> foreach_tensor_add_scalar_kernel_slow(TensorList tensors, Scalar scalar) {
   verify_list(tensors);
 
