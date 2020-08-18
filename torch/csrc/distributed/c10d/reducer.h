@@ -59,17 +59,51 @@ class Reducer {
   // be called once before calling backward.
   void register_comm_hook(std::unique_ptr<CommHookInterface> iface);
 
+  // Returns a vector of tensors in each bucket in sequential order.
+  std::vector<std::vector<at::Tensor>> getBucketTensors() const;
+
+  // Rebuild buckets based on rebuilt_params_ and rebuilt_param_indices_ according
+  // to when tensors received grads in the backward pass.
+  // TODO this function makes broadcast communication call and
+  // could be overlapped with next forward() call, thus
+  // it could be async. Will make it async when rebuilding buckets for
+  // find_unused_parameters = true case, as we could rebuild buckets more than
+  // once for find_unused_parameters = true case, where subgraphs are trained
+  // and parameter indices order may change more frequently.
+  // For find_unused_parameters = false case, buckets are only rebuilt once,
+  // the performance cost is negligible.
+  std::vector<std::vector<size_t>> rebuildBuckets();
+
+  // Returns true if we should rebuild buckets, else false. We only rebuild
+  // buckets once after the first iteration and never rebuild them if
+  // find_unused_parameters_.
+  bool shouldRebuildBuckets() const;
+
+  // Pushes all parameters to be rebuilt.
+  void pushRebuiltParamsForAllIndices();
+
+  // Creates and sets ForwardPassWorkHandle given a ProcessGroup::Work and the
+  // corresponding tensor being reduced.
+  void setForwardPassWorkHandle(
+      std::shared_ptr<c10d::ProcessGroup::Work> forwardPassWorkHandle,
+      at::Tensor& tensor);
+
+  // Retrieve on-device tensors used to track locally unused parameters. For
+  // each replica, it is a tensor where index i = 1 if the Variable with that
+  // index has been used.
+  std::vector<at::Tensor> getLocalUsedMapsOnDevice() const;
+
  protected:
   // Forward declaration.
   struct Bucket;
-
   // Locates a specific variable by replica index and variable index.
   struct VariableIndex {
     size_t replica_index;
     size_t variable_index;
   };
+  void pushRebuiltParams(const VariableIndex& index);
 
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
   std::vector<std::vector<torch::autograd::Variable>> replicas_;
   std::shared_ptr<c10d::ProcessGroup> process_group_;
   std::vector<std::vector<bool>> expect_sparse_gradients_;
@@ -126,16 +160,6 @@ class Reducer {
   // Broadcast rebuilt buckets from rank 0 to other ranks before initializing
   // the buckets
   void sync_bucket_indices(std::vector<std::vector<size_t>>& bucket_indices);
-  // Rebuild buckets based on rebuilt_params_ and rebuilt_param_indices_
-  // TODO this function makes broadcast communication call and
-  // could be overlapped with next forward() call, thus
-  // it could be async. Will make it async when rebuilding buckets for
-  // find_unused_parameters = true case, as we could rebuild buckets more than
-  // once for find_unused_parameters = true case, where subgraphs are trained
-  // and parameter indices order may change more frequently.
-  // For find_unused_parameters = false case, buckets are only rebuilt once,
-  // the performance cost is negligible.
-  std::vector<std::vector<size_t>> rebuildBuckets();
 
   using GradCallback =
       torch::distributed::autograd::DistAutogradContext::GradCallback;
@@ -153,7 +177,6 @@ class Reducer {
   // Buckets are filled as the gradients they hold are computed (triggered by
   // autograd hooks). Buckets are reduced in a predetemined order that is
   // identical across processes.
-  //
   struct BucketReplica {
     // Flattened (1 dimensional) contents of bucket.
     at::Tensor contents;
@@ -258,6 +281,18 @@ class Reducer {
   };
   RpcContext rpc_context_;
 
+  // A struct containing work handle and tensor for allreduce scheduled in
+  // forward pass, if applicable.
+  struct ForwardPassAllreduceWork {
+    std::shared_ptr<c10d::ProcessGroup::Work> workHandle;
+    at::Tensor resultTensor;
+  };
+
+  // Handle for the currently scheduled allreduce in the forward pass, if
+  // applicable.
+  ForwardPassAllreduceWork forwardPassWorkHandle_;
+  // Division factor for reduction of gradients.
+  int divFactor_;
  private:
   // comm_hook_ is used to access the DDP communication hook if registered.
   std::unique_ptr<CommHookInterface> comm_hook_;
