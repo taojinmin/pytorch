@@ -90,8 +90,10 @@ struct PackedConvWeightsQnnp : public ConvPackedParamsBase<kSpatialDim> {
       at::Tensor bias,
       torch::List<int64_t> stride,
       torch::List<int64_t> padding,
+      torch::List<int64_t> output_padding,
       torch::List<int64_t> dilation,
       int64_t groups,
+      bool transpose,
       c10::optional<double> input_scale,
       std::vector<int64_t> kernel,
       at::Tensor w_scale,
@@ -102,8 +104,10 @@ struct PackedConvWeightsQnnp : public ConvPackedParamsBase<kSpatialDim> {
         bias(std::move(bias)),
         stride_(std::move(stride)),
         padding_(std::move(padding)),
+        output_padding_(std::move(output_padding)),
         dilation_(std::move(dilation)),
         groups_(groups),
+        transpose_(transpose),
         input_scale(input_scale),
         kernel_(std::move(kernel)),
         w_scales(w_scale),
@@ -114,11 +118,13 @@ struct PackedConvWeightsQnnp : public ConvPackedParamsBase<kSpatialDim> {
             {(uint32_t)dilation_[1], (uint32_t)dilation_[0]},
             {(uint32_t)padding_[0], (uint32_t)padding_[1],
              (uint32_t)padding_[0], (uint32_t)padding_[1]},
-            /*adjustment=*/{0, 0},
+            {(uint32_t)output_padding_[1], (uint32_t)output_padding_[0]},
             groups_,
-            groups_ * this->orig_weight.size(1),
-            this->orig_weight.size(0),
-            /*transpose=*/false,
+            transpose ? this->orig_weight.size(0)
+                      : this->orig_weight.size(1) * groups_,
+            transpose ? this->orig_weight.size(1) * groups_
+                      : this->orig_weight.size(0),
+            transpose_,
             is_per_channel)
         {}
 
@@ -127,8 +133,10 @@ struct PackedConvWeightsQnnp : public ConvPackedParamsBase<kSpatialDim> {
   at::Tensor bias;
   torch::List<int64_t> stride_;
   torch::List<int64_t> padding_;
+  torch::List<int64_t> output_padding_;
   torch::List<int64_t> dilation_;
   int64_t groups_;
+  bool transpose_;
   c10::optional<double> input_scale;
   std::vector<int64_t> kernel_;
   at::Tensor w_scales;
@@ -153,8 +161,10 @@ struct PackedConvWeightsQnnp : public ConvPackedParamsBase<kSpatialDim> {
       c10::optional<at::Tensor> bias,
       torch::List<int64_t> stride,
       torch::List<int64_t> padding,
+      torch::List<int64_t> output_padding,
       torch::List<int64_t> dilation,
-      int64_t groups);
+      int64_t groups,
+      bool transpose);
 
   torch::List<int64_t> stride() const override {
     return stride_;
@@ -164,12 +174,20 @@ struct PackedConvWeightsQnnp : public ConvPackedParamsBase<kSpatialDim> {
     return padding_;
   }
 
+  torch::List<int64_t> output_padding() const override {
+    return output_padding_;
+  }
+
   torch::List<int64_t> dilation() const override {
     return dilation_;
   }
 
   int64_t groups() const override {
     return groups_;
+  }
+
+  bool transpose() const override {
+    return transpose_;
   }
 
  private:
@@ -267,11 +285,14 @@ std::vector<float> generate_requantization_scales(
 }
 
 std::pair<std::vector<uint8_t>, at::Tensor> make_zero_points_and_scales_tensor(
-    const at::Tensor& weight_contig
-    ) {
-  auto num_output_channels = weight_contig.size(0);
+    const at::Tensor& weight_contig,
+    bool transpose = false,
+    uint32_t groups = 1
+  ) {
+  const int out_ch_idx = transpose ? 1 : 0;
+  auto num_output_channels = weight_contig.size(out_ch_idx) * (transpose ? groups : 1);
   // Add 8 to account for bufferring needed by QNNPACK.
-  auto num_output_channels_padded = weight_contig.size(0) + 8;
+  auto num_output_channels_padded = num_output_channels + 8;
   const auto qtype = weight_contig.qscheme();
   std::vector<uint8_t> weight_zp(num_output_channels_padded, 0);
   // Adjust weight zero point, similar to weight data.
